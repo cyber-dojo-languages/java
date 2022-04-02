@@ -6,7 +6,7 @@ readonly JSON=`cat docker/image_name.json`
 readonly IMAGE_NAME="${BASH_REMATCH[1]}"
 
 readonly MY_DIR="$( cd "$( dirname "${0}" )" && pwd )"
-readonly EXPECTED='javac 17.0.1'
+readonly EXPECTED='javac 18'
 readonly ACTUAL=$(docker run --rm -it ${IMAGE_NAME} sh -c 'javac -version 2>&1')
 
 if echo "${ACTUAL}" | grep -q "${EXPECTED}"; then
