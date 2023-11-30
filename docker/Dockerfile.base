@@ -1,2 +1,2 @@
-FROM bellsoft/liberica-openjdk-alpine-musl:18
+FROM bellsoft/liberica-openjdk-alpine-musl:21
 LABEL maintainer=jon@jaggersoft.com
