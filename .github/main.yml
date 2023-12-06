@@ -1,0 +1,23 @@
+name: Main
+
+on:
+  push:
+    branches:
+      - main
+  #schedule:
+  #  - cron: '0 0 1,5,10,15,20,25 * *'
+
+jobs:
+
+  build-publish-trigger:
+    runs-on: ubuntu-latest
+    secrets: 
+      DOCKER_PASS: ${{ secrets.DOCKER_PASS }}
+      DOCKER_USER: ${{ secrets.DOCKER_USER }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image, test it, push it dockerhub, notify dependents
+        run: ./pipe_build_up_test.sh
+  
