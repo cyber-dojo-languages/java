@@ -3,7 +3,7 @@ name: Main
 on:
   push:
     branches:
-      - master
+      - main
   schedule:
     - cron: '0 9 * * MON'
 
@@ -22,5 +22,5 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build image, test it, push it dockerhub, notify dependents
+      - name: Build image, test it, push to registry
         run: ./pipe_build_up_test.sh
