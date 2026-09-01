@@ -53,13 +53,53 @@ One-off per-span figures, taken on the earlier JDK 25 image:
 
 `-XX:TieredStopAtLevel=1` is the whole of the flags-only saving: on its own it
 takes the console from 308ms to 254ms, where `-XX:+UseSerialGC` on its own
-reaches 307ms, a difference too small to tell from noise. So `UseSerialGC` is
-not adopted. On top of a cache the tiered flag is still worth having, taking the
-console from 137ms to 117ms.
+reaches 307ms, a difference too small to tell from noise. On top of a cache the
+tiered flag is still worth having, taking the console from 137ms to 117ms.
+
+`-XX:+UseSerialGC` earns its place for a different reason, and it is not
+optional: without it, replaying a cache crashes the JVM. See the next section.
+It costs nothing measurable, so there is no trade to weigh. Through the runner,
+red measures 0.740s with it and 0.751s without, and green 0.550s against 0.506s.
 
 Both flags trade steady-state throughput for startup speed, which is the right
 trade only because the process lives for well under a second and is then thrown
 away. That is a property of how the runner works, not of java.
+
+## A cache needs the serial collector, or it crashes the JVM
+
+Replaying a cache while the JVM chooses its own collector kills it:
+
+```
+#  SIGILL (0x4) at pc=0x0000ffff76c4cf38, pid=17, tid=18
+# JVM: OpenJDK 64-Bit Server VM (26.0.2.1+1, mixed mode, client, sharing,
+#      tiered, compressed oops, compressed class ptrs, g1 gc, linux-aarch64)
+# Problematic frame:
+# v  ~AdapterBlob 0x0000ffff76c4cf38
+```
+
+It is intermittent, which is what makes it dangerous: measured by running the
+start-point's own `run_tests.sh` repeatedly, 3 of 5 runs failed with the cache
+and the JVM's default collector, and 0 of 20 with `-XX:+UseSerialGC` added.
+Twenty clean runs would be a 4% coincidence at even a 15% residual rate.
+
+Two things about it are worth knowing before adopting a cache anywhere else.
+
+**It does not reproduce under a plain `docker run`.** It needs the flags the
+runner passes, and `source/server/runner.rb` in the runner repository is where
+those live. Every direct container run of this image passes, which is why this
+has to be measured through `run_tests.sh` rather than through a probe of one's
+own. Reimplementing the invocation is how the crash gets missed.
+
+**The amber light hides it.** A crash in javac still produces amber, which is the
+colour the amber case expects, so amber passed in every failing run. Only red and
+green exposed it. Checking a start-point on amber alone would show nothing wrong.
+
+The runner's memory limit decides which collector the JVM picks when it is left
+to choose, and so decides whether the crash appears at all: the published runner
+allows 2GB, above the threshold at which the JVM picks G1. A tighter cap, such
+as the 768MB the runner's pre-started-container-pool work prepares, is below that
+threshold and would have the JVM pick the serial collector by itself. Naming the
+flag means a start-point does not depend on which way that falls.
 
 ## A cache recorded at build time is read at run time
 
@@ -77,6 +117,10 @@ java  -XX:AOTCache=/aot/junit-console.aot -XX:AOTMode=on ...      runs the tests
 
 Timings alone could not have shown this; a silently dropped cache looks like a
 slow run, not a failure.
+
+What this establishes is that a cache is read, and nothing more. It says nothing
+about whether reading one is reliable, which is a separate question with a
+separate answer, above. Both checks are needed.
 
 ## The caches survive a learner's edit
 
@@ -119,8 +163,13 @@ The JDK version belongs to this repository, and the caches do not.
 - A cache holds a test framework's classes, so it is recorded per LTF image
   rather than here. java-junit is the worked example:
   `docker/record_aot_caches.sh` and `docker/throwaway_kata` in
-  `cyber-dojo-languages/java-junit`, and the `-XX:AOTCache=` flags in
-  `cyber-dojo-start-points/java-junit/start_point/cyber-dojo.sh`.
+  `cyber-dojo-languages/java-junit`, and the flags in
+  `cyber-dojo-start-points/java-junit/start_point/cyber-dojo.sh`. Those flags are
+  `-XX:AOTCache=`, `-XX:+UseSerialGC` and `-XX:TieredStopAtLevel=1`, on both
+  JVMs, with javac's spelled `-J...` so they reach the JVM rather than the
+  compiler. The collector is not optional; see above.
+- Each JVM gets its own cache. The two are recorded from the same command lines
+  the start-point runs, so what they hold is what a kata loads.
 - `docker/Dockerfile` here is generated and carries a DO NOT EDIT header. It is
   committed as an artefact and can name an older JDK than `Dockerfile.base`
   without affecting what is built, so read `Dockerfile.base` to learn the JDK.
@@ -130,8 +179,12 @@ The JDK version belongs to this repository, and the caches do not.
 
 ## Caveats
 
-- Warm runs, aarch64 under Docker Desktop, no repeats and so no confidence
-  intervals. Production is amd64 on a shared 4-vCPU box.
+- Warm runs, aarch64 under Docker Desktop. Production is amd64 on a shared
+  4-vCPU box. The per-span timings are single samples with no confidence
+  intervals; the crash rates are 5 and 20 runs, which is enough to separate 3 in
+  5 from 0 in 20 and not enough to put a bound on what remains.
+- The crash was found on aarch64. Whether amd64 has it, and whether the serial
+  collector is the whole of the answer there too, is untested.
 - java-junit only. The other seven java start-points inherit the JDK but have no
   caches, and the other JVM families (kotlin, groovy, clojure, scala) are
   untested here. The flags should carry over; a cache has to be recorded per
@@ -144,13 +197,35 @@ The JDK version belongs to this repository, and the caches do not.
 
 - Whether the seven other java frameworks are each large enough to repay 54MB
   of image.
+- What the crash actually is. The serial collector avoids it, which is enough to
+  ship, but the cause is unexplained and so is the possibility that some other
+  combination reaches it. A JDK bug report would need an amd64 answer first.
+- Whether a residual rate survives the serial collector. 0 in 20 does not rule
+  out a few percent, and a few percent of presses is not acceptable, so this is
+  worth re-measuring whenever the JDK or the runner's limits move.
 - Whether the approach reaches the other JVM families, and whether their bodies
   are large enough for it to matter. `faster-traffic-light.md` measures
   perl-testsimple's body at 12ms, where nothing like this would be worth doing.
 
-## Reproducing the whole-run figures
+## Measuring a change to any of this
 
-Needs only this repository's image chain and the start-point.
+Edit the start-point's own `cyber-dojo.sh` and run its own `run_tests.sh`, in a
+loop. It reports each light and its duration, and it exercises the flags through
+the runner, which is the only place the crash appears. Both the crash rate and
+the durations quoted here came from it:
+
+```
+for i in $(seq 20); do
+  ( cd <cyber-dojo-start-points>/java-junit && ./run_tests.sh ) > run_${i}.log 2>&1
+  grep -E '^(red|amber|green)[[:space:]]' run_${i}.log
+done
+```
+
+It handles uncommitted changes by copying the start-point aside and committing
+there, so a candidate can be measured before anything is pushed.
+
+A press can be timed on its own, without the runner, and that is where the 634ms
+and the roughly 200ms come from:
 
 ```
 docker run --rm --network none --user sandbox \
@@ -168,7 +243,10 @@ docker run --rm --network none --user sandbox \
 ```
 
 The kata is copied out of its read-only mount because javac writes class files
-beside the source. Delete the class files between runs, or the second run
-onwards measures a compile that has nothing to do. For the no-cache figure, run
-the same command with the `-XX:AOTCache=` and `-J-XX:AOTCache=` flags removed
-from `cyber-dojo.sh`.
+beside the source. Delete the class files between runs, or the second run onwards
+measures a compile that has nothing to do. For the no-cache figure, run the same
+command with the `-XX:AOTCache=` and `-J-XX:AOTCache=` flags removed from
+`cyber-dojo.sh`.
+
+Timing a press this way cannot show the crash, and a green result here is not
+evidence of correctness. Use `run_tests.sh` for that.
