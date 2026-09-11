@@ -1,12 +1,15 @@
-# The JDK is named exactly rather than taken as :latest. :latest is whatever
-# bellsoft published most recently, which is not a property of this image: it
-# changes under a rebuild that changed nothing here, and check_version.sh then
-# asks for a JDK this image does not have and fails the build.
+# The floating latest tag, so a rebuild picks up the newest stable JDK. It is
+# published as an index holding real amd64 and arm64 layers, so each runner
+# builds from binaries its own kernel can exec.
 #
-# 24 is the floor for recording an AOT cache in one step, with
-# -XX:AOTCacheOutput. That is what the java LTF images built on this one do to
-# cut the JVM startup a kata pays on every [test] press, so this version is the
-# thing that makes it available to all of them. Older JDKs need
+# A JDK of 24 or newer is required, and latest satisfies it. 24 is the floor
+# for recording an AOT cache in one step, with -XX:AOTCacheOutput. That is
+# what the java LTF images built on this one do to cut the JVM startup a kata
+# pays every time a learner runs their tests. Older JDKs need
 # -XX:AOTMode=record and -XX:AOTMode=create as two separate steps.
-FROM bellsoft/liberica-openjdk-alpine-musl:26.0.2.1
+#
+# check_version.sh names a major and minor only, so a patch release lands
+# without a build failing. A new major fails it, which stops publication
+# until the version this image reports is written down again.
+FROM bellsoft/liberica-openjdk-alpine-musl:latest
 LABEL maintainer=jon@jaggersoft.com
